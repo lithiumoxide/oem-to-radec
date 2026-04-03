@@ -222,7 +222,6 @@ def main() -> int:
     p.add_argument("--positions", type=int, default=1, help="Number of positions to output (time series mode)")
     p.add_argument(
         "--output-to-csv",
-        "--ouput-to-csv",
         dest="output_to_csv",
         default="",
         help="If set, write positions to a CSV file (one position per line). Provide an output directory.",

@@ -47,13 +47,21 @@ python "c:\repos\oem_to_radec\oem_to_radec.py" ^
   --interval 10 --positions 20
 ```
 
+When a location is provided, the output also indicates whether the target is above the local horizon and a visibility label:
+
+- **Above horizon**: printed as "Yes"/"No"
+- **Visibility labels** (based on altitude):
+  - `< 20°`: "close to horizon"
+  - `≥ 20°`: "visible"
+
 ### CSV output
 
 Use `--output-to-csv <output_dir>`.
 
 - The generated filename is: `<OBJECT_NAME>_<YYYYMMDDTHHMMSSZ>.csv`
 - Columns always include: `time_utc, ra_icrs, dec_icrs`
-- If a location is provided (and Alt/Az is enabled), the CSV also includes: `alt_deg, az_deg`
+- If a location is provided (and Alt/Az is enabled), the CSV also includes: `alt_deg, az_deg, above_horizon, visibility`
+- `above_horizon` is `true` or `false`. `visibility` is included only when it matches a label ("close_to_horizon" or "visible").
 
 ```bash
 python "c:\repos\oem_to_radec\oem_to_radec.py" ^

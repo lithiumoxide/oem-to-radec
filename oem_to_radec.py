@@ -211,6 +211,24 @@ def _parse_time_utc(s: str) -> Time:
     return Time(s2, format="isot", scale="utc")
 
 
+def _visibility_from_alt_deg(alt_deg: float) -> tuple[bool, str]:
+    """
+    Return (above_horizon, visibility_label) based on altitude degrees.
+    visibility_label is one of: "", "close_to_horizon", "visible".
+    Rules:
+    - above_horizon is True if alt_deg > 0
+    - "close_to_horizon" if 0 < alt_deg < 20
+    - "visible" if alt_deg >= 20
+    - otherwise "".
+    """
+    above = alt_deg > 0.0
+    if above and alt_deg < 20.0:
+        return True, "close_to_horizon"
+    if alt_deg >= 20.0:
+        return above, "visible" if above else ""
+    return above, ""
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Convert OEM states to RA/Dec and Alt/Az for telescope pointing.")
     p.add_argument("--oem", required=True, help="Path to CCSDS OEM file (.asc)")
@@ -268,7 +286,7 @@ def main() -> int:
         csv_file = csv_path.open("w", newline="", encoding="utf-8")
         fieldnames = ["time_utc", "ra_icrs", "dec_icrs"]
         if have_location and not args.no_altaz:
-            fieldnames += ["alt_deg", "az_deg"]
+            fieldnames += ["alt_deg", "az_deg", "above_horizon", "visibility"]
         csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         csv_writer.writeheader()
 
@@ -295,8 +313,15 @@ def main() -> int:
             row = {"time_utc": ti.utc.isot, "ra_icrs": ra_s, "dec_icrs": dec_s}
             if have_location and not args.no_altaz:
                 altaz = target_gcrs.transform_to(AltAz(obstime=ti, location=loc))
-                row["alt_deg"] = f"{altaz.alt.to_value(u.deg):.6f}"
-                row["az_deg"] = f"{altaz.az.to_value(u.deg):.6f}"
+                alt_deg = altaz.alt.to_value(u.deg)
+                az_deg = altaz.az.to_value(u.deg)
+                row["alt_deg"] = f"{alt_deg:.6f}"
+                row["az_deg"] = f"{az_deg:.6f}"
+                # Horizon/visibility annotations
+                above, visibility = _visibility_from_alt_deg(alt_deg)
+                row["above_horizon"] = "true" if above else "false"
+                if visibility:
+                    row["visibility"] = visibility
             csv_writer.writerow(row)
             wrote_any = True
         else:
@@ -309,6 +334,14 @@ def main() -> int:
                 alt = altaz.alt.to(u.deg)
                 print(f"  Az          = {az.to_string(sep=':', precision=1, pad=True)}")
                 print(f"  Alt         = {alt.to_string(sep=':', precision=1, alwayssign=True, pad=True)}")
+                # Horizon/visibility annotations
+                alt_deg = alt.to_value(u.deg)
+                above, visibility = _visibility_from_alt_deg(alt_deg)
+                print(f"  Above horizon = {'Yes' if above else 'No'}")
+                if visibility == "close_to_horizon":
+                    print(f"  Visibility   = close to horizon")
+                elif visibility == "visible":
+                    print(f"  Visibility   = visible")
             print(f"  r [km]      = {r_km[0]: .6f} {r_km[1]: .6f} {r_km[2]: .6f}")
             print(f"  v [km/s]    = {v_km_s[0]: .9f} {v_km_s[1]: .9f} {v_km_s[2]: .9f}")
             if i != n_positions - 1:

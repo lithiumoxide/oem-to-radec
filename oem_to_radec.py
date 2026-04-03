@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import configparser
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Tuple, Optional, Dict, Any
 
 import numpy as np
 from astropy import units as u
@@ -211,22 +212,81 @@ def _parse_time_utc(s: str) -> Time:
     return Time(s2, format="isot", scale="utc")
 
 
-def _visibility_from_alt_deg(alt_deg: float) -> tuple[bool, str]:
+def _visibility_from_alt_deg(alt_deg: float, threshold_visible_deg: float = 20.0) -> tuple[bool, str]:
     """
     Return (above_horizon, visibility_label) based on altitude degrees.
     visibility_label is one of: "", "close_to_horizon", "visible".
     Rules:
     - above_horizon is True if alt_deg > 0
-    - "close_to_horizon" if 0 < alt_deg < 20
-    - "visible" if alt_deg >= 20
+    - "close_to_horizon" if 0 < alt_deg < threshold_visible_deg
+    - "visible" if alt_deg >= threshold_visible_deg
     - otherwise "".
     """
     above = alt_deg > 0.0
-    if above and alt_deg < 20.0:
+    if above and alt_deg < threshold_visible_deg:
         return True, "close_to_horizon"
-    if alt_deg >= 20.0:
+    if alt_deg >= threshold_visible_deg:
         return above, "visible" if above else ""
     return above, ""
+
+
+def _load_settings_ini() -> Dict[str, Any]:
+    """
+    Load settings from a settings.ini file.
+    Search order: current working directory, script directory. First found wins.
+    Expected section: [defaults] with keys:
+      lat, lon, height_m, visibility_deg
+    All values are optional.
+    """
+    parser = configparser.ConfigParser()
+    candidate_paths: List[Path] = [
+        Path.cwd() / "settings.ini",
+        Path(__file__).resolve().parent / "settings.ini",
+    ]
+    cfg: Dict[str, Any] = {}
+    for path in candidate_paths:
+        if path.exists():
+            parser.read(path, encoding="utf-8")
+            if parser.has_section("defaults"):
+                sec = parser["defaults"]
+                if "lat" in sec:
+                    try:
+                        cfg["lat"] = float(sec.get("lat", "").strip())
+                    except ValueError:
+                        pass
+                if "lon" in sec:
+                    try:
+                        cfg["lon"] = float(sec.get("lon", "").strip())
+                    except ValueError:
+                        pass
+                if "height_m" in sec:
+                    try:
+                        cfg["height_m"] = float(sec.get("height_m", "").strip())
+                    except ValueError:
+                        pass
+                if "visibility_deg" in sec:
+                    try:
+                        cfg["visibility_deg"] = float(sec.get("visibility_deg", "").strip())
+                    except ValueError:
+                        pass
+            break
+    return cfg
+
+
+def _resolve_effective_inputs(
+    args: argparse.Namespace, settings: Dict[str, Any]
+) -> Tuple[Optional[float], Optional[float], float, float]:
+    """
+    Determine effective (lat, lon, height_m, visibility_deg) with precedence:
+    CLI overrides settings.ini. If neither supplies lat/lon, default to 0.0, 0.0.
+    Height defaults to 0.0 if not provided anywhere. 
+    Visibility threshold defaults to 20.0 if not provided anywhere.
+    """
+    lat_val = args.lat if args.lat is not None else settings.get("lat", 0.0)
+    lon_val = args.lon if args.lon is not None else settings.get("lon", 0.0)
+    height_m: float = args.height_m if args.height_m is not None else settings.get("height_m", 0.0)
+    visibility_deg: float = settings.get("visibility_deg", 20.0)
+    return float(lat_val), float(lon_val), float(height_m), float(visibility_deg)
 
 
 def main() -> int:
@@ -235,7 +295,8 @@ def main() -> int:
     p.add_argument("--time", required=True, help="UTC time, e.g. 2026-04-02T07:10:00.000")
     p.add_argument("--lat", type=float, required=False, help="Observer latitude in degrees (+N). Optional if only RA/Dec needed.")
     p.add_argument("--lon", type=float, required=False, help="Observer longitude in degrees (+E). Optional if only RA/Dec needed.")
-    p.add_argument("--height-m", type=float, default=0.0, help="Observer height above ellipsoid in meters (optional)")
+    p.add_argument("--height-m", type=float, default=None, help="Observer height above ellipsoid in meters (optional)")
+    p.add_argument("--visibility-deg", type=float, required=False, help="Altitude threshold (deg) for 'visible' label. Default from settings.ini or 20.")
     p.add_argument("--interval", type=float, default=0.0, help="If >0, minutes between positions (time series mode)")
     p.add_argument("--positions", type=int, default=1, help="Number of positions to output (time series mode)")
     p.add_argument(
@@ -257,10 +318,17 @@ def main() -> int:
     object_name = _parse_object_name(text)
     object_name_safe = _safe_filename_component(object_name)
 
-    have_location = args.lat is not None and args.lon is not None
+    # Load settings and resolve effective inputs (CLI overrides settings.ini)
+    settings = _load_settings_ini()
+    # Apply explicit CLI visibility override if provided
+    if args.visibility_deg is not None:
+        settings["visibility_deg"] = float(args.visibility_deg)
+    eff_lat, eff_lon, eff_height_m, visibility_deg = _resolve_effective_inputs(args, settings)
+
+    have_location = eff_lat is not None and eff_lon is not None
     loc: EarthLocation | None = None
     if have_location:
-        loc = EarthLocation.from_geodetic(lon=args.lon * u.deg, lat=args.lat * u.deg, height=args.height_m * u.m)
+        loc = EarthLocation.from_geodetic(lon=float(eff_lon) * u.deg, lat=float(eff_lat) * u.deg, height=float(eff_height_m) * u.m)
     else:
         # If no location is provided, implicitly suppress Alt/Az.
         args.no_altaz = True
@@ -318,7 +386,7 @@ def main() -> int:
                 row["alt_deg"] = f"{alt_deg:.6f}"
                 row["az_deg"] = f"{az_deg:.6f}"
                 # Horizon/visibility annotations
-                above, visibility = _visibility_from_alt_deg(alt_deg)
+                above, visibility = _visibility_from_alt_deg(alt_deg, threshold_visible_deg=visibility_deg)
                 row["above_horizon"] = "true" if above else "false"
                 if visibility:
                     row["visibility"] = visibility
@@ -336,7 +404,7 @@ def main() -> int:
                 print(f"  Alt         = {alt.to_string(sep=':', precision=1, alwayssign=True, pad=True)}")
                 # Horizon/visibility annotations
                 alt_deg = alt.to_value(u.deg)
-                above, visibility = _visibility_from_alt_deg(alt_deg)
+                above, visibility = _visibility_from_alt_deg(alt_deg, threshold_visible_deg=visibility_deg)
                 print(f"  Above horizon = {'Yes' if above else 'No'}")
                 if visibility == "close_to_horizon":
                     print(f"  Visibility   = close to horizon")

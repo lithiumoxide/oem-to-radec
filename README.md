@@ -1,6 +1,8 @@
-## Ephemeris to RA/Dec (and Alt/Az) for Artemis II OEM
+## Ephemeris to RA/Dec (and Alt/Az) for CCSDS Orbit Ephemeris Message files
 
 This repo contains a small script to convert a **CCSDS OEM (Orbit Ephemeris Message)** file with Earth-centered Cartesian state vectors into telescope-friendly **RA/Dec** (ICRS/J2000-like), and optionally **Alt/Az** for a given observer location.
+
+This may be useful for converting OEM files issued by NASA and other space agencies into RA/Dec coordinates, such as the Artemis II ephemeris data [available here](https://www.nasa.gov/missions/artemis/artemis-2/track-nasas-artemis-ii-mission-in-real-time/).
 
 ### Files
 - `oem_to_radec.py`: main CLI
@@ -35,7 +37,7 @@ python "c:\repos\oem_to_radec\oem_to_radec.py" ^
 
 #### RA/Dec + Alt/Az (provide location)
 
-Longitude is positive-east (so Ireland is negative), latitude is positive-north.
+Longitude is positive-east, latitude is positive-north.
 
 ```bash
 python "c:\repos\oem_to_radec\oem_to_radec.py" ^
